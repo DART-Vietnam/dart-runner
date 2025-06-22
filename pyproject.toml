@@ -1,0 +1,18 @@
+[project]
+name = "dart-runner"
+version = "0.1.0"
+description = "Orchestrates DART-Pipeline runs with forecast downloads and model predictions"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "dart-bias-correct",
+    "dart-pipeline",
+    "docker>=7.1.0",
+    # xarray 2025.6 causes an error with dtype in the step variable which prevents
+    # loading by xr.open_dataset(), do not upgrade!
+    "xarray==2025.4.*"
+]
+
+[tool.uv.sources]
+dart-pipeline = { git = "https://github.com/kraemer-lab/DART-Pipeline" }
+dart-bias-correct = { git = "https://github.com/kraemer-lab/dart-bias-correct" }
