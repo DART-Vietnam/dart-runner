@@ -129,6 +129,7 @@ def fail(bold: str, *args):
 
 
 def parse_args():
+    today = datetime.today().date().isoformat()
     parser = argparse.ArgumentParser(
         description="Orchestrates DART-Pipeline runs with forecast downloads and model predictions",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -142,7 +143,7 @@ def parse_args():
    Set --cache=all to enable maximum caching
    """,
     )
-    parser.add_argument("--date", help="Forecast date to run for", default="2025-05-28")
+    parser.add_argument("--date", help="Forecast date to run for", default=today)
     parser.add_argument("--model", help="Name of the model (docker image) to use")
     parser.add_argument(
         "--cache",
