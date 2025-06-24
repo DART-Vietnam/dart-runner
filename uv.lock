@@ -550,7 +550,7 @@ wheels = [
 [[package]]
 name = "dart-bias-correct"
 version = "0.1.0"
-source = { git = "https://github.com/kraemer-lab/dart-bias-correct#2fe3092e50176d0fcd7de7e613c469a45c784a53" }
+source = { git = "https://github.com/kraemer-lab/dart-bias-correct#47def14cc95cb67b66e10220d168c1c8b12e59a2" }
 dependencies = [
     { name = "geoglue" },
     { name = "metpy" },
@@ -560,7 +560,7 @@ dependencies = [
 [[package]]
 name = "dart-pipeline"
 version = "0.1.0"
-source = { git = "https://github.com/kraemer-lab/DART-Pipeline#1fcda818fd49fe54e12cb794b4b9c9857d617200" }
+source = { git = "https://github.com/kraemer-lab/DART-Pipeline#56525378350b29b96039046874a1cde1e5d76d7c" }
 dependencies = [
     { name = "beautifulsoup4" },
     { name = "cdsapi" },
