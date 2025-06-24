@@ -10,6 +10,10 @@ from typing import overload
 from typing import Callable
 
 import xarray as xr
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+from scipy.stats import norm
 from geoglue.util import sha256
 from geoglue.region import gadm
 from dart_pipeline.metrics.ecmwf import get_forecast_open_data, process_forecast
@@ -43,6 +47,48 @@ CHECKSUMS: dict[str, tuple[str, str]] = {
         "eefh_testv2_test_githubv1_3.nc",
     ),
 }
+
+
+def generate_dummy_data(districts, start_date=None, weeks=4, seed=42):
+    """
+    Generates dummy forecast data with confidence intervals for given districts.
+
+    Parameters:
+        districts (list): List of GID_2 district codes.
+        start_date (str or datetime, optional): Start date (default: today).
+        weeks (int): Number of weeks to generate (default: 4).
+        seed (int): Random seed for reproducibility.
+
+    Returns:
+        pd.DataFrame: Dummy data matching the specified schema.
+    """
+    np.random.seed(seed)
+    confidence_levels = [0.5, 0.75, 0.9, 0.95, 0.99]
+    z_scores = {ci: norm.ppf(1 - (1 - ci) / 2) for ci in confidence_levels}
+    start_date = datetime.today() if start_date is None else pd.to_datetime(start_date)
+    dates = [start_date + timedelta(weeks=i) for i in range(weeks)]
+
+    rows = []
+    for district in districts:
+        for date in dates:
+            base_pred = np.random.uniform(1, 30)  # Central prediction
+            std_dev = base_pred * np.random.uniform(0.05, 0.15)  # Simulated uncertainty
+            for ci in confidence_levels:
+                z = z_scores[ci]
+                margin = z * std_dev
+                pred_lower = max(0, base_pred - margin)
+                pred_upper = base_pred + margin
+                rows.append(
+                    {
+                        ".pred": base_pred,
+                        "intervals": ci,
+                        ".pred_lower": pred_lower,
+                        ".pred_upper": pred_upper,
+                        "date": date.date(),
+                        "district": district,
+                    }
+                )
+    return pd.DataFrame(rows)
 
 
 def get_file(alias: str, root: Path | None = None) -> Path:
@@ -148,11 +194,13 @@ def run(
 def main():
     sources = get_path("sources", ISO3, "ecmwf")
     output_root = get_path("output", ISO3, "ecmwf")
+    dengue_predictions_folder = get_path("output", ISO3, "dengue")
     args = parse_args()
     cache = list(STEPS.keys()) if args.cache == "all" else args.cache.split(",")
 
     date = args.date
     region = gadm(ISO3, ADMIN)
+    dengue_dummy_pred = dengue_predictions_folder / f"{ISO3}-{ADMIN}-{date}-example.csv"
 
     forecast_instant = sources / f"{ISO3}-{date}-ecmwf.forecast.instant.nc"
     forecast_accum = sources / f"{ISO3}-{date}-ecmwf.forecast.accum.nc"
@@ -183,7 +231,13 @@ def main():
     output = run(
         cache, "zs", [forecast_zonal_stats], process_forecast, f"{ISO3}-{ADMIN}", date
     )
-    msg("==> Forecast with zonal aggregation:", output[0])
+    msg("... Forecast with zonal aggregation:", output[0])
+    msg("==> Running dummy model")
+    geom = region.read()
+    df = generate_dummy_data(geom.GID_2)
+    df["truth"] = 0
+    df.to_csv(dengue_dummy_pred, index=False)
+    msg("... Model output:", dengue_dummy_pred)
     # run_in_docker(docker_image, "Rscript /app/run.R")
     # expected_output = get_path(
     #     "output", ISO3, "model", "{ISO3}-{ADMIN}-{date}-dengue-predictions.csv"
