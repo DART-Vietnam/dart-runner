@@ -202,6 +202,7 @@ def main():
     date = args.date
     region = gadm(ISO3, ADMIN)
     dengue_dummy_pred = dengue_predictions_folder / f"{ISO3}-{ADMIN}-{date}-example.csv"
+    dengue_reload_flag_file = dengue_predictions_folder / ".reload"
 
     forecast_instant = sources / f"{ISO3}-{date}-ecmwf.forecast.instant.nc"
     forecast_accum = sources / f"{ISO3}-{date}-ecmwf.forecast.accum.nc"
@@ -239,6 +240,7 @@ def main():
     df["truth"] = 0
     df.to_csv(dengue_dummy_pred, index=False)
     msg("... Model output:", dengue_dummy_pred)
+    dengue_reload_flag_file.write_text(date)
     # run_in_docker(docker_image, "Rscript /app/run.R")
     # expected_output = get_path(
     #     "output", ISO3, "model", "{ISO3}-{ADMIN}-{date}-dengue-predictions.csv"
