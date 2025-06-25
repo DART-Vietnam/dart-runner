@@ -2,6 +2,9 @@
 #
 # Orchestrates DART-Pipeline runs with forecast downloads and model predictions
 
+import os
+import sys
+import shutil
 import docker
 import logging
 import argparse
@@ -24,6 +27,7 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s", level=logging.INFO
 )
 
+MIN_DISK_SPACE_GB = 40
 STEPS = {
     "dl": "Fetching forecast",
     "bc": "Performing forecast bias correction",
@@ -47,6 +51,50 @@ CHECKSUMS: dict[str, tuple[str, str]] = {
         "eefh_testv2_test_githubv1_3.nc",
     ),
 }
+
+volumes = {
+    "local_renv_cache": {
+        "bind": "/modelling/renv/.cache",
+        "mode": "rw",
+    },
+    os.path.expanduser("~/.local/share/dart-pipeline/sources/VNM/model"): {
+        "bind": "/modelling/data",
+        "mode": "rw",
+    },
+}
+
+model_command = """
+mkdir -p /modelling/renv/.cache && \
+Rscript -e 'renv::paths$cache();renv::restore(prompt=FALSE)' && \
+Rscript 01_data_prepper.R \
+    data/fake_incidence_full.csv \
+    data/weather/VNM-2-2001-2019-era5.nc \
+    docker_container_test_1-12wa \
+    data/gadm/gid2_lookup_df.rds && \
+Rscript 99_mlr3_modelling.R \
+    data/weekly_inc_weather_test.rds \
+    data/tuned_lrners_tunedRF_fh-1-12_wa.rds \
+    docker_container_test_1-12wa \
+    --future_plan multicore \
+    --future_workers 7
+"""
+
+
+def run_actual_1():
+    client = docker.from_env()
+    container = client.containers.run(
+        image="dart-model-container:0.3.2",
+        command=["/bin/bash", "-c", model_command],
+        working_dir="/modelling",
+        environment={"RENV_PATHS_CACHE": "/modelling/renv/.cache"},
+        volumes=volumes,
+        detach=True,
+        remove=True,
+    )
+
+    for line in container.logs(stream=True):
+        sys.stdout.buffer.write(line)
+        sys.stdout.flush()
 
 
 def generate_dummy_data(districts, start_date=None, weeks=4, seed=42):
@@ -107,25 +155,17 @@ def get_file(alias: str, root: Path | None = None) -> Path:
       Actual: {actual_checksum}""")
 
 
-def run_in_docker(image, command, volumes={}, remove=True):
-    client = docker.from_env()
-    container = client.containers.run(
-        image=image,
-        command=command,
-        volumes=volumes,
-        remove=remove,
-        detach=False,
-    )
-    exitcode = 0
-    return exitcode, container.decode()
-
-
 def msg(bold: str, *args):
     print(f"\033[1m{bold}\033[0m", *args)
 
 
 def fail(bold: str, *args):
     print(f"\033[31;1m{bold}\033[0m", *args)
+
+
+def get_free_gigabytes():
+    _, _, free = shutil.disk_usage("/")
+    return free / (1024**3)  # GB
 
 
 def parse_args():
@@ -144,11 +184,16 @@ def parse_args():
    """,
     )
     parser.add_argument("--date", help="Forecast date to run for", default=today)
-    parser.add_argument("--model", help="Name of the model (docker image) to use")
+    parser.add_argument(
+        "--model",
+        help="Name of the model to use",
+        choices=["dummy", "actual-1"],
+        default="dummy",
+    )
     parser.add_argument(
         "--cache",
         help="Use cached files for the following (comma separated) steps if available",
-        default="dl",
+        default="all",
     )
 
     return parser.parse_args()
@@ -193,6 +238,13 @@ def run(
 
 
 def main():
+    free_gb = get_free_gigabytes()
+    if free_gb < MIN_DISK_SPACE_GB:
+        fail(
+            "!!! Not enough disk space:",
+            f"{MIN_DISK_SPACE_GB} GB required, found {free_gb:.1f} free",
+        )
+        sys.exit(1)
     sources = get_path("sources", ISO3, "ecmwf")
     output_root = get_path("output", ISO3, "ecmwf")
     dengue_predictions_folder = get_path("output", ISO3, "dengue")
@@ -234,19 +286,19 @@ def main():
         cache, "zs", [forecast_zonal_stats], process_forecast, f"{ISO3}-{ADMIN}", date
     )
     msg("... Forecast with zonal aggregation:", output[0])
-    msg("==> Running dummy model")
-    geom = region.read()
-    df = generate_dummy_data(geom.GID_2)
-    df["truth"] = 0
-    df.to_csv(dengue_dummy_pred, index=False)
-    msg("... Model output:", dengue_dummy_pred)
-    dengue_reload_flag_file.write_text(date)
-    # run_in_docker(docker_image, "Rscript /app/run.R")
-    # expected_output = get_path(
-    #     "output", ISO3, "model", "{ISO3}-{ADMIN}-{date}-dengue-predictions.csv"
-    # )
-    # if not expected_output.exists():
-    #     fail("Model failed", "expected output at:", expected_output)
+    msg("==> Running model:", args.model)
+    match args.model:
+        case "dummy":
+            geom = region.read()
+            df = generate_dummy_data(geom.GID_2)
+            df["truth"] = 0
+            df.to_csv(dengue_dummy_pred, index=False)
+            msg("... Model output:", dengue_dummy_pred)
+            dengue_reload_flag_file.write_text(date)
+
+        case "actual-1":
+            run_actual_1()
+            # TODO: check expected output, else fail()
 
 
 if __name__ == "__main__":
