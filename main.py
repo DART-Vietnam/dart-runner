@@ -67,12 +67,12 @@ model_command = """
 mkdir -p /modelling/renv/.cache && \
 Rscript -e 'renv::paths$cache();renv::restore(prompt=FALSE)' && \
 Rscript 01_data_prepper.R \
-    data/fake_incidence_full.csv \
+    data/fake_full_incidence.csv \
     data/weather/VNM-2-2001-2019-era5.nc \
     docker_container_test_1-12wa \
     data/gadm/gid2_lookup_df.rds && \
 Rscript 99_mlr3_modelling.R \
-    data/weekly_inc_weather_test.rds \
+    data/weekly_inc_weather_docker_container_test_1-12wa.rds \
     data/tuned_lrners_tunedRF_fh-1-12_wa.rds \
     docker_container_test_1-12wa \
     --future_plan multicore \
