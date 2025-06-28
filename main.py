@@ -41,16 +41,27 @@ DEFAULT_FORECAST_DATE = "2025-05-28"
 OBSERVATION_REFERENCE = "T2m_r_tp_Vietnam_ERA5.nc"
 PREDICTION_CSV_SUFFIX = "dengue-predictions.csv"
 
-CHECKSUMS: dict[str, tuple[str, str]] = {
-    "observation": (
-        "282ad3246e79c28c68e469e74388fe68b6e3496673a2e807178151f462adb729",
-        "T2m_r_tp_Vietnam_ERA5.nc",
-    ),
-    "historical-forecast": (
-        "fd40c75c3dcf8bb25e0c32e5689cef941927964a132feab3686ae0d0d9454a7a",
-        "eefh_testv2_test_githubv1_3.nc",
-    ),
+
+def parse_checksums(s: str) -> dict[str, str]:
+    out = {}
+    for line in s.split("\n"):
+        if line.strip() == "":
+            continue
+        checksum, *parts = line.split()
+        out[" ".join(parts)] = checksum
+    return out
+
+
+CHECKSUMS = parse_checksums("""
+282ad3246e79c28c68e469e74388fe68b6e3496673a2e807178151f462adb729  T2m_r_tp_Vietnam_ERA5.nc
+fd40c75c3dcf8bb25e0c32e5689cef941927964a132feab3686ae0d0d9454a7a  eefh_testv2_test_githubv1_3.nc
+""")
+
+ALIASES = {
+    "observation": "T2m_r_tp_Vietnam_ERA5.nc",
+    "historical-forecast": "eefh_testv2_test_githubv1_3.nc",
 }
+
 
 volumes = {
     "local_renv_cache": {
@@ -124,7 +135,7 @@ def generate_dummy_data(districts, start_date=None, weeks=4, seed=42):
             for ci in confidence_levels:
                 z = z_scores[ci]
                 margin = z * std_dev
-                pred_lower = max(0, base_pred - margin)
+                pred_lower = max(0, base_pred - margin)  # type: ignore
                 pred_upper = base_pred + margin
                 rows.append(
                     {
@@ -141,9 +152,9 @@ def generate_dummy_data(districts, start_date=None, weeks=4, seed=42):
 
 def get_file(alias: str, root: Path | None = None) -> Path:
     root = root or Path.cwd()
-    if alias not in CHECKSUMS:
-        raise ValueError(f"Could not find {alias=} in CHECKSUMS")
-    expected_checksum, file = CHECKSUMS[alias]
+    if alias not in ALIASES:
+        raise ValueError(f"Could not find {alias=} in ALIASES")
+    expected_checksum, file = CHECKSUMS[ALIASES[alias]], ALIASES[alias]
     path = root / file
     if not path.exists():
         raise FileNotFoundError(f"Could not find {file=} under {root=}")
