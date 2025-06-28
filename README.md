@@ -64,6 +64,12 @@ Vietnam (`T2m_r_tp_Vietnam_ERA5.nc`) and the historical forecast data for
 Vietnam (`eefh_testv2_test_githubv1_3.nc`). These files have to be obtained from
 the authors and placed in the folder where this repository was cloned.
 
+> [!NOTE]
+> dart-runner only processes forecast data and orchestrates. It **does
+> not** process historical observational data that is also required by the
+> model. For this, consult the [DART-Pipeline
+> documentation](https://dart-pipeline.readthedocs.io)
+
 ## Usage
 
 dart-runner can be invoked from the command line:
