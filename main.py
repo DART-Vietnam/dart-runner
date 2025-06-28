@@ -52,6 +52,7 @@ def parse_checksums(s: str) -> dict[str, str]:
     return out
 
 
+# output of sha256sum (Linux) or shasum -a 256 (macOS)
 CHECKSUMS = parse_checksums("""
 282ad3246e79c28c68e469e74388fe68b6e3496673a2e807178151f462adb729  T2m_r_tp_Vietnam_ERA5.nc
 fd40c75c3dcf8bb25e0c32e5689cef941927964a132feab3686ae0d0d9454a7a  eefh_testv2_test_githubv1_3.nc
