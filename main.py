@@ -3,25 +3,31 @@
 # Orchestrates DART-Pipeline runs with forecast downloads and model predictions
 
 import os
+import re
 import sys
 import shutil
 import docker
 import logging
 import argparse
+import datetime
 from pathlib import Path
-from typing import overload
-from typing import Callable
+from typing import overload, Callable
 
 import xarray as xr
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
 from scipy.stats import norm
+import xclim.indicators.atmos
 from geoglue.util import sha256
+from geoglue.cds import ReanalysisSingleLevels
 from geoglue.region import gadm
+import dart_pipeline.metrics as metrics
+import dart_pipeline.metrics.era5.list_metrics as list_metrics
 from dart_pipeline.metrics.ecmwf import get_forecast_open_data, process_forecast
 from dart_pipeline.paths import get_path
+from dart_bias_correct.precipitation import bias_correct_precipitation
 from dart_bias_correct.forecast import bias_correct_forecast_from_paths
+
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s", level=logging.INFO
@@ -31,6 +37,7 @@ MIN_DISK_SPACE_GB = 40
 STEPS = {
     "dl": "Fetching forecast",
     "bc": "Performing forecast bias correction",
+    "spei": "Computing SPI and SPEI",
     "zs": "Processing forecast",
     "m": "Running model",
 }
@@ -40,6 +47,7 @@ ADMIN = 2
 DEFAULT_FORECAST_DATE = "2025-05-28"
 OBSERVATION_REFERENCE = "T2m_r_tp_Vietnam_ERA5.nc"
 PREDICTION_CSV_SUFFIX = "dengue-predictions.csv"
+REGION = gadm(ISO3, ADMIN)
 
 
 def parse_checksums(s: str) -> dict[str, str]:
@@ -56,11 +64,16 @@ def parse_checksums(s: str) -> dict[str, str]:
 CHECKSUMS = parse_checksums("""
 282ad3246e79c28c68e469e74388fe68b6e3496673a2e807178151f462adb729  T2m_r_tp_Vietnam_ERA5.nc
 fd40c75c3dcf8bb25e0c32e5689cef941927964a132feab3686ae0d0d9454a7a  eefh_testv2_test_githubv1_3.nc
+c1ec01cee2efda44772b14c0e3b6f455de883601d0c4481257e7654cbaf7ef96  vngp_regrid_era_full.nc
 """)
 
 ALIASES = {
     "observation": "T2m_r_tp_Vietnam_ERA5.nc",
     "historical-forecast": "eefh_testv2_test_githubv1_3.nc",
+    # REMOCLIC. (2016). VnGP - Vietnam Gridded Precipitation dataset
+    # (0.10°×0.10°) [Data set]. Data Integration and Analysis System (DIAS).
+    # https://doi.org/10.20783/DIAS.270
+    "reference-precipitation": "vngp_regrid_era_full.nc",
 }
 
 
@@ -125,8 +138,10 @@ def generate_dummy_data(districts, start_date=None, weeks=4, seed=42):
     np.random.seed(seed)
     confidence_levels = [0.5, 0.75, 0.9, 0.95, 0.99]
     z_scores = {ci: norm.ppf(1 - (1 - ci) / 2) for ci in confidence_levels}
-    start_date = datetime.today() if start_date is None else pd.to_datetime(start_date)
-    dates = [start_date + timedelta(weeks=i) for i in range(weeks)]
+    start_date = (
+        datetime.datetime.today() if start_date is None else pd.to_datetime(start_date)
+    )
+    dates = [start_date + datetime.timedelta(weeks=i) for i in range(weeks)]
 
     rows = []
     for district in districts:
@@ -181,13 +196,14 @@ def get_free_gigabytes():
 
 
 def parse_args():
-    today = datetime.today().date().isoformat()
+    today = datetime.datetime.today().date().isoformat()
     parser = argparse.ArgumentParser(
         description="Orchestrates DART-Pipeline runs with forecast downloads and model predictions",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Cache steps (default=dl)
   * dl: Forecast downloaded files, e.g. VNM-2025-05-28-ecmwf.forecast.nc
   * bc: Bias corrected files, e.g. VNM-2025-05-28-ecmwf.forecast.corrected.nc
+  * spei: Corrected files with SPI and SPEI added, e.g. VNM-2025-05-28-ecmwf.forecast.corrected_spei.nc
   * zs: Zonal statistics files, e.g. VNM-2-2025-05-28-ecmwf.forecast.nc
 
    Use --cache=s1,s2 to use cached files in s1 and s2, for example, set--cache=dl,bc
@@ -249,6 +265,112 @@ def run(
     return func(*args, **kwargs)
 
 
+def get_gamma_window(gamma_params: xr.Dataset) -> int:
+    re_matches = re.match(r".*window=(\d+)", gamma_params.attrs["DART_history"])
+    if re_matches is None:
+        raise ValueError("No window option found in gamma parameters file")
+    return int(re_matches.groups()[0])
+
+
+def add_spi_spei_bc(ds: xr.Dataset):
+    """Module to add SPI and SPEI to forecast"""
+    cur_forecast = ds.median(dim="number")
+    sources = get_path("sources", ISO3, "ecmwf")
+    forecast_date: datetime.date = pd.to_datetime(ds.time.min().values).date()
+    prev_week_forecast_date: datetime.date = forecast_date - datetime.timedelta(days=7)
+    prev_forecast = xr.open_dataset(
+        sources / f"{ISO3}-{prev_week_forecast_date}-ecmwf.forecast.corrected.nc",
+        decode_timedelta=True,
+    )
+    # select only the first week of previous week's forecast
+    prev_forecast = prev_forecast.isel(time=slice(0, 1)).median(dim="number")
+    if "pevt" not in cur_forecast:
+        raise ValueError(
+            "pevt not found in current forecast, required for spei_bc calculation"
+        )
+    if "pevt" not in prev_forecast:
+        raise ValueError(
+            "pevt not found in previous forecast, required for spei_bc calculation"
+        )
+
+    # get window
+    spi_gamma_params = metrics.get_gamma_params(ISO3, "spi_corrected")
+    spei_gamma_params = metrics.get_gamma_params(ISO3, "spei_corrected")
+    spi_w = get_gamma_window(spi_gamma_params)
+    spei_w = get_gamma_window(spei_gamma_params)
+    if spi_w != spei_w:
+        raise ValueError(f"Differing windows {spi_w=} and {spei_w=}")
+    window_weeks = spi_w
+    logging.info("To fetch ERA5 data, using gamma parameters window=%d", window_weeks)
+
+    # Concatenating observational data
+    # We concat 4 weeks of observation data for a window of 6 weeks, with previous
+    # week's bias-corrected forecast standing in for observations as ERA5 data
+    # is released with a log of 5 days. Schematic diagram shown below depicting
+
+    # ERA5 SPI/SPEI calculation (for a 2-week forecast starting 2025-03-03)
+    # ----------------------------------------------------------------------------------------------
+    # ▼ ERA5 (Past 4 Weeks)
+    # [#######]                                                   Week -4 (2025-01-27 to 2025-02-02)
+    #         [#######]                                           Week -3 (2025-02-03 to 2025-02-09)
+    #                 [#######]                                   Week -2 (2025-02-10 to 2025-02-16)
+    #                         [#######]                           Week -1 (2025-02-17 to 2025-02-23)
+    # ▶ previous week's forecast*       [-------]                 Week  0 (2025-02-24 to 2025-03-02)
+    # ▶ 2-week forecast*                        [====>>>]         Week  1 (2025-03-03 to 2025-03-09)
+    #   * bias-corrected                                [====>>>] Week  2 (2025-03-10 to 2025-03-16)
+
+    era5_start = prev_week_forecast_date - datetime.timedelta(
+        weeks=window_weeks - 2
+    )  # 6-2 = 4 weeks
+    era5_path = get_path("sources", ISO3, "era5")
+    pool = ReanalysisSingleLevels(
+        REGION, list_metrics.VARIABLES, era5_path
+    ).get_dataset_pool()
+    era5_end = prev_week_forecast_date - datetime.timedelta(days=1)
+    if era5_end.month == 12:
+        if era5_end.day == 31:
+            _era5 = pool[era5_end.year].sel(valid_time=slice(era5_start, era5_end))
+        else:
+            raise ValueError(
+                "Currently SPI and SPEI calculations for forecasts after January 8"
+            )
+    else:
+        _era5 = pool.get_current_year(era5_start, era5_end)
+    era5 = xr.merge([_era5.instant, _era5.accum]).rename({"valid_time": "time"})
+    era5 = era5[["t2m", "tp"]]
+
+    # era5: get tp_bc, using dart-bias-correct
+    tp_ref = xr.open_dataset(get_file("reference-precipitation"))
+    era_tp = xr.open_dataset(get_file("observation"))
+    era5["tp_bc"] = bias_correct_precipitation(tp_ref, era_tp, era5[["tp"]]).rename(
+        "tp_bc"
+    )
+
+    # era5: calculate pevt using t2m, mx2t24, mn2t24
+    t2m = era5.t2m
+    temp_daily = xr.Dataset(
+        {
+            "t2m": t2m.resample(time="1D").mean(),
+            "mx2t24": t2m.resample(time="1D").max(),
+            "mn2t24": t2m.resample(time="1D").min(),
+        }
+    )
+    tp_bc = era5.tp_bc.resample(time="D").sum()
+    # do daily resample of entire dataset
+    pevt: xr.DataArray = xclim.indicators.atmos.potential_evapotranspiration(
+        tasmin=temp_daily.mn2t24, tasmax=temp_daily.mx2t24, tas=temp_daily.t2m
+    ).rename("pevt")  # type: ignore
+    era5d = xr.merge([pevt, tp_bc])
+
+    # era5: do weekly resample and get balance (wb)
+    era5w = era5d.resample(time="7D", closed="left", label="left").sum()  # noqa: F841
+
+    # concatenate datasets -- include pevt and tp_bc
+    # calculate wb_bc = tp_bc - pevt
+    # perform weekly rolling mean with center=False and window=window --> wb_bc
+    # apply fitted gamma functions to get spi_bc, spei_bc
+
+
 def main():
     free_gb = get_free_gigabytes()
     if free_gb < MIN_DISK_SPACE_GB:
@@ -264,13 +386,15 @@ def main():
     cache = list(STEPS.keys()) if args.cache == "all" else args.cache.split(",")
 
     date = args.date
-    region = gadm(ISO3, ADMIN)
     dengue_dummy_pred = dengue_predictions_folder / f"{ISO3}-{ADMIN}-{date}-example.csv"
     dengue_reload_flag_file = dengue_predictions_folder / ".reload"
 
     forecast_instant = sources / f"{ISO3}-{date}-ecmwf.forecast.instant.nc"
     forecast_accum = sources / f"{ISO3}-{date}-ecmwf.forecast.accum.nc"
     forecast_corrected = sources / f"{ISO3}-{date}-ecmwf.forecast.corrected.nc"
+    forecast_corrected_indices = (  # noqa: F841
+        sources / f"{ISO3}-{date}-ecmwf.forecast.corrected_spei.nc"
+    )
     forecast_zonal_stats = output_root / f"{ISO3}-{ADMIN}-{date}-ecmwf.forecast.nc"
 
     run(
@@ -281,7 +405,7 @@ def main():
         ISO3,
         date,
     )
-    corrected_file: Path = run(
+    run(
         cache,
         "bc",
         forecast_corrected,
@@ -289,11 +413,8 @@ def main():
         get_file("observation"),
         get_file("historical-forecast"),
         f"{ISO3}-{date}",
-        region.bbox.int(),
+        REGION.bbox.int(),
     )
-    xr.open_dataset(
-        corrected_file, decode_timedelta=True
-    )  # try opening to catch errors
     output = run(
         cache, "zs", [forecast_zonal_stats], process_forecast, f"{ISO3}-{ADMIN}", date
     )
@@ -301,7 +422,7 @@ def main():
     msg("==> Running model:", args.model)
     match args.model:
         case "dummy":
-            geom = region.read()
+            geom = REGION.read()
             df = generate_dummy_data(geom.GID_2)
             df["truth"] = 0
             df.to_csv(dengue_dummy_pred, index=False)
