@@ -580,17 +580,18 @@ wheels = [
 [[package]]
 name = "dart-bias-correct"
 version = "0.1.0"
-source = { git = "https://github.com/kraemer-lab/dart-bias-correct#47def14cc95cb67b66e10220d168c1c8b12e59a2" }
+source = { git = "https://github.com/kraemer-lab/dart-bias-correct#f3c8c76c3591146fa69a6e83db8593e80cfd5977" }
 dependencies = [
     { name = "geoglue" },
     { name = "metpy" },
     { name = "python-cmethods" },
+    { name = "xclim" },
 ]
 
 [[package]]
 name = "dart-pipeline"
 version = "0.1.0"
-source = { git = "https://github.com/kraemer-lab/DART-Pipeline#56525378350b29b96039046874a1cde1e5d76d7c" }
+source = { git = "https://github.com/kraemer-lab/DART-Pipeline#0a8bf9f3d14110c6618ba334d164bf4ff1797b8a" }
 dependencies = [
     { name = "beautifulsoup4" },
     { name = "cdsapi" },
@@ -933,7 +934,7 @@ wheels = [
 [[package]]
 name = "geoglue"
 version = "0.1.0"
-source = { git = "https://github.com/kraemer-lab/geoglue#fd2ee9b2999b8f4d255bb042c3c453770b1f6cc0" }
+source = { git = "https://github.com/kraemer-lab/geoglue#7cbfffb92d04ddfcb5226e173d3f0813d252b051" }
 dependencies = [
     { name = "cdo" },
     { name = "cdsapi" },
