@@ -21,10 +21,11 @@ import xclim.indicators.atmos
 from geoglue.util import sha256
 from geoglue.cds import ReanalysisSingleLevels
 from geoglue.region import gadm
+from dart_pipeline.paths import get_path
 import dart_pipeline.metrics as metrics
 import dart_pipeline.metrics.era5.list_metrics as list_metrics
+from dart_pipeline.metrics.era5.util import gamma_func, norminv
 from dart_pipeline.metrics.ecmwf import get_forecast_open_data, process_forecast
-from dart_pipeline.paths import get_path
 from dart_bias_correct.precipitation import bias_correct_precipitation
 from dart_bias_correct.forecast import bias_correct_forecast_from_paths
 
@@ -48,6 +49,14 @@ DEFAULT_FORECAST_DATE = "2025-05-28"
 OBSERVATION_REFERENCE = "T2m_r_tp_Vietnam_ERA5.nc"
 PREDICTION_CSV_SUFFIX = "dengue-predictions.csv"
 REGION = gadm(ISO3, ADMIN)
+
+
+class MismatchError(Exception):
+    pass
+
+
+class AxisMismatchError(MismatchError):
+    pass
 
 
 def parse_checksums(s: str) -> dict[str, str]:
@@ -272,7 +281,7 @@ def get_gamma_window(gamma_params: xr.Dataset) -> int:
     return int(re_matches.groups()[0])
 
 
-def add_spi_spei_bc(cf: xr.Dataset):
+def add_spi_spei_bc(cf: xr.Dataset) -> xr.Dataset:
     """Module to add SPI and SPEI to forecast"""
     cur_forecast = cf.median(dim="number")
     sources = get_path("sources", ISO3, "ecmwf")
@@ -285,11 +294,11 @@ def add_spi_spei_bc(cf: xr.Dataset):
     # select only the first week of previous week's forecast
     prev_forecast = prev_forecast.isel(time=slice(0, 1)).median(dim="number")
     if "pevt" not in cur_forecast:
-        raise ValueError(
+        raise KeyError(
             "pevt not found in current forecast, required for spei_bc calculation"
         )
     if "pevt" not in prev_forecast:
-        raise ValueError(
+        raise KeyError(
             "pevt not found in previous forecast, required for spei_bc calculation"
         )
 
@@ -303,7 +312,7 @@ def add_spi_spei_bc(cf: xr.Dataset):
     spi_w = get_gamma_window(spi_gamma_params)
     spei_w = get_gamma_window(spei_gamma_params)
     if spi_w != spei_w:
-        raise ValueError(f"Differing windows {spi_w=} and {spei_w=}")
+        raise MismatchError(f"Differing windows {spi_w=} and {spei_w=}")
     window_weeks = spi_w
     logging.info("To fetch ERA5 data, using gamma parameters window=%d", window_weeks)
 
@@ -336,7 +345,7 @@ def add_spi_spei_bc(cf: xr.Dataset):
             _era5 = pool[era5_end.year].sel(valid_time=slice(era5_start, era5_end))
         else:
             raise ValueError(
-                "Currently SPI and SPEI calculations for forecasts after January 8"
+                "Currently SPI and SPEI calculations are only supported for forecasts after January 8"
             )
     else:
         _era5 = pool.get_current_year(era5_start, era5_end)
@@ -373,16 +382,40 @@ def add_spi_spei_bc(cf: xr.Dataset):
     ds = xr.concat([era5w, prev_forecast, cur_forecast], dim="time")
     exp_time_len = window_weeks + len(cf.time) - 1
     if len(ds.time) != window_weeks + len(cf.time) - 1:
-        raise ValueError(
-            f"Concatentation of ERA5, previous week forecast and current forecast did not result in expected length={exp_time_len}"
+        raise MismatchError(
+            f"Concatenation of ERA5, previous week forecast and current forecast did not result in expected length={exp_time_len}"
         )
 
     # calculate wb_bc = tp_bc - pevt
     ds["wb_bc"] = ds.tp_bc - ds.pevt
+    ds = ds.drop_vars("pevt")
 
     # perform weekly rolling mean with center=False and window=window --> wb_bc
+    ds_ma = (
+        ds.rolling(time=window_weeks, center=False).mean(dim="time").dropna(dim="time")
+    )
+    # standardised precipitation index (bias corrected) calculation
+    gamma_spi = xr.apply_ufunc(
+        gamma_func, ds_ma.tp_bc, spi_gamma_params.alpha, spi_gamma_params.beta
+    )
+    spi_bc: xr.DataArray = xr.apply_ufunc(norminv, gamma_spi).rename("spi_bc")
 
-    # apply fitted gamma functions to get spi_bc, spei_bc
+    # standardised precipitation-evaporation index (bias corrected) calculation
+    gamma_spei = xr.apply_ufunc(
+        gamma_func, ds_ma, spei_gamma_params.alpha, spei_gamma_params.beta
+    )
+    spei_bc = xr.apply_ufunc(norminv, gamma_spei).rename("spei_bc")
+
+    # check lengths
+    if (spi_bc.time != cf.time).any():
+        raise AxisMismatchError(
+            f"Temporal axis mismatch between spi_bc {spi_bc.time} and forecast {cf.time}"
+        )
+    if (spei_bc.time != cf.time).any():
+        raise AxisMismatchError(
+            f"Temporal axis mismatch between spi_bc {spei_bc.time} and forecast {cf.time}"
+        )
+    return cf.assign(spi_bc=spi_bc, spei_bc=spei_bc)
 
 
 def main():
