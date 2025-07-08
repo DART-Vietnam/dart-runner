@@ -272,11 +272,11 @@ def get_gamma_window(gamma_params: xr.Dataset) -> int:
     return int(re_matches.groups()[0])
 
 
-def add_spi_spei_bc(ds: xr.Dataset):
+def add_spi_spei_bc(cf: xr.Dataset):
     """Module to add SPI and SPEI to forecast"""
-    cur_forecast = ds.median(dim="number")
+    cur_forecast = cf.median(dim="number")
     sources = get_path("sources", ISO3, "ecmwf")
-    forecast_date: datetime.date = pd.to_datetime(ds.time.min().values).date()
+    forecast_date: datetime.date = pd.to_datetime(cf.time.min().values).date()
     prev_week_forecast_date: datetime.date = forecast_date - datetime.timedelta(days=7)
     prev_forecast = xr.open_dataset(
         sources / f"{ISO3}-{prev_week_forecast_date}-ecmwf.forecast.corrected.nc",
@@ -292,6 +292,10 @@ def add_spi_spei_bc(ds: xr.Dataset):
         raise ValueError(
             "pevt not found in previous forecast, required for spei_bc calculation"
         )
+
+    # limit forecasts to pevt and tp_bc which is all that is needed for SPI and SPEI calc
+    cur_forecast = cur_forecast[["tp_bc", "pevt"]]
+    prev_forecast = prev_forecast[["tp_bc", "pevt"]]
 
     # get window
     spi_gamma_params = metrics.get_gamma_params(ISO3, "spi_corrected")
@@ -366,8 +370,18 @@ def add_spi_spei_bc(ds: xr.Dataset):
     era5w = era5d.resample(time="7D", closed="left", label="left").sum()  # noqa: F841
 
     # concatenate datasets -- include pevt and tp_bc
+    ds = xr.concat([era5w, prev_forecast, cur_forecast], dim="time")
+    exp_time_len = window_weeks + len(cf.time) - 1
+    if len(ds.time) != window_weeks + len(cf.time) - 1:
+        raise ValueError(
+            f"Concatentation of ERA5, previous week forecast and current forecast did not result in expected length={exp_time_len}"
+        )
+
     # calculate wb_bc = tp_bc - pevt
+    ds["wb_bc"] = ds.tp_bc - ds.pevt
+
     # perform weekly rolling mean with center=False and window=window --> wb_bc
+
     # apply fitted gamma functions to get spi_bc, spei_bc
 
 
