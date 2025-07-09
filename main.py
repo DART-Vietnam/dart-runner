@@ -66,7 +66,7 @@ ALIASES = {
     "historical-forecast": "eefh_testv2_test_githubv1_3.nc",
 }
 MODEL_DATA_HOME = Path.home() / ".local/share/dart-pipeline/sources/VNM/model"
-MODEL_EXPECTED_OUTPUT = MODEL_DATA_HOME / "forecast-snapshot-ref.csv"
+MODEL_EXPECTED_OUTPUT = MODEL_DATA_HOME / "forecast_snapshot_ref.csv"
 
 if not MODEL_DATA_HOME.exists():
     warnings.warn("Model data home does not exist, cannot run actual model")
