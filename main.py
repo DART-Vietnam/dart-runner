@@ -4,6 +4,7 @@
 
 import os
 import sys
+import types
 import shutil
 import docker
 import logging
@@ -58,13 +59,14 @@ CHECKSUMS = parse_checksums("""
 fd40c75c3dcf8bb25e0c32e5689cef941927964a132feab3686ae0d0d9454a7a  eefh_testv2_test_githubv1_3.nc
 """)
 
+MODEL_IMAGE = "dart-model-container:0.4.0"
 ALIASES = {
     "observation": "T2m_r_tp_Vietnam_ERA5.nc",
     "historical-forecast": "eefh_testv2_test_githubv1_3.nc",
 }
 
 
-volumes = {
+DOCKER_VOLUMES = {
     "local_renv_cache": {
         "bind": "/modelling/renv/.cache",
         "mode": "rw",
@@ -75,31 +77,45 @@ volumes = {
     },
 }
 
-model_command = """
-mkdir -p /modelling/renv/.cache && \
+M1 = types.SimpleNamespace(
+    {  # type: ignore
+        "WORKDIR": "/modelling",
+        "RENV_CACHE_CONTAINER": "/modelling/renv/.cache",
+        "INPUT_INC_FILE": "data/fake_incidence_full.csv",
+        "R_OUTFILE_STAMP": "snapshot_ref",
+        "FORECAST_OUTFILE": "forecast_snapshot_ref",
+        "FCST_HORIZON": 2,
+        "PARALLEL_WORKERS": -1,
+    }
+)
+
+model_command = f"""
+mkdir -p {M1.RENV_CACHE_CONTAINER} && \
 Rscript -e 'renv::paths$cache();renv::restore(prompt=FALSE)' && \
 Rscript 01_data_prepper.R \
-    data/fake_full_incidence.csv \
+    {M1.INPUT_INC_FILE} \
     data/weather/VNM-2-2001-2019-era5.nc \
-    docker_container_test_1-12wa \
+    {M1.R_OUTFILE_STAMP} \
     data/gadm/gid2_lookup_df.rds && \
 Rscript 99_mlr3_modelling.R \
-    data/weekly_inc_weather_docker_container_test_1-12wa.rds \
+    data/weekly_inc_weather_{M1.R_OUTFILE_STAMP}.rds \
     data/tuned_lrners_tunedRF_fh-1-12_wa.rds \
-    docker_container_test_1-12wa \
+    data/updated_agaci_obj_lists_tunedRF_fh-1-12_wa.qs \
+    {M1.FORECAST_OUTFILE} \
+    --horizon {M1.FCST_HORIZON} \
     --future_plan multicore \
-    --future_workers 7
+    --future_workers {M1.PARALLEL_WORKERS}
 """
 
 
 def run_actual_1():
     client = docker.from_env()
     container = client.containers.run(
-        image="dart-model-container:0.3.2",
+        image=MODEL_IMAGE,
         command=["/bin/bash", "-c", model_command],
         working_dir="/modelling",
         environment={"RENV_PATHS_CACHE": "/modelling/renv/.cache"},
-        volumes=volumes,
+        volumes=DOCKER_VOLUMES,
         detach=True,
         remove=True,
     )
