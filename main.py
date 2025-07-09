@@ -9,6 +9,7 @@ import shutil
 import docker
 import logging
 import argparse
+import warnings
 from pathlib import Path
 from typing import overload
 from typing import Callable
@@ -64,7 +65,11 @@ ALIASES = {
     "observation": "T2m_r_tp_Vietnam_ERA5.nc",
     "historical-forecast": "eefh_testv2_test_githubv1_3.nc",
 }
+MODEL_DATA_HOME = Path.home() / ".local/share/dart-pipeline/sources/VNM/model"
+MODEL_EXPECTED_OUTPUT = MODEL_DATA_HOME / "forecast-snapshot-ref.csv"
 
+if not MODEL_DATA_HOME.exists():
+    warnings.warn("Model data home does not exist, cannot run actual model")
 
 DOCKER_VOLUMES = {
     "local_renv_cache": {
@@ -78,15 +83,13 @@ DOCKER_VOLUMES = {
 }
 
 M1 = types.SimpleNamespace(
-    {  # type: ignore
-        "WORKDIR": "/modelling",
-        "RENV_CACHE_CONTAINER": "/modelling/renv/.cache",
-        "INPUT_INC_FILE": "data/fake_incidence_full.csv",
-        "R_OUTFILE_STAMP": "snapshot_ref",
-        "FORECAST_OUTFILE": "forecast_snapshot_ref",
-        "FCST_HORIZON": 2,
-        "PARALLEL_WORKERS": -1,
-    }
+    WORKDIR="/modelling",
+    RENV_CACHE_CONTAINER="/modelling/renv/.cache",
+    INPUT_INC_FILE="data/fake_incidence_full.csv",
+    R_OUTFILE_STAMP="snapshot_ref",
+    FORECAST_OUTFILE="forecast_snapshot_ref",
+    FCST_HORIZON=2,
+    PARALLEL_WORKERS=-1,
 )
 
 model_command = f"""
@@ -265,6 +268,11 @@ def run(
     return func(*args, **kwargs)
 
 
+def validate_output(p: Path | str) -> pd.DataFrame:
+    # TODO: add validation here
+    return pd.read_csv(p)
+
+
 def main():
     free_gb = get_free_gigabytes()
     if free_gb < MIN_DISK_SPACE_GB:
@@ -325,8 +333,23 @@ def main():
             dengue_reload_flag_file.write_text(date)
 
         case "actual-1":
+            if not MODEL_DATA_HOME.exists():
+                fail("[!] Cannot run model without model data folder", MODEL_DATA_HOME)
+                sys.exit(1)
             run_actual_1()
-            # TODO: check expected output, else fail()
+            if not MODEL_EXPECTED_OUTPUT.exists():
+                fail("[!] Model did not produce output")
+            df = validate_output(MODEL_EXPECTED_OUTPUT)
+            if df is None:
+                fail("[!] Model failed validation")
+            else:
+                min_date = df.date.min()
+                df.to_csv(
+                    dengue_predictions_folder
+                    / f"{ISO3}-{ADMIN}-{min_date}-forecast.csv",
+                    index=False,
+                )
+                dengue_reload_flag_file.write_text(min_date)
 
 
 if __name__ == "__main__":
