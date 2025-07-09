@@ -93,6 +93,38 @@ Some of the key options are:
   `--model=dummy`
 * `--cache`: to cache only specified steps; by default all steps (see above) are cached to speed up execution
 
+## Demo
+
+For the demo, all components need to be setup and in-place.
+
+1. First, clone the `docker-dart-vis-app` repo and run `./build.sh` and
+   `./run.sh` to run the container. The frontend will be visible at
+   http://localhost:5001
+1. Then clone the `dart-pipeline-model-container` repo and link the
+   `modelling/data` folder into the expected source folder:
+
+   ```shell
+   SRC=~/.local/share/dart-pipeline/sources/VNM
+   DEST=~/.local/share/dart-pipeline/output/VNM/dengue
+   mkdir -p "$SRC"
+   mkdir -p "$DEST"
+   cd "$SRC"
+   ln -s <path to cloned model>/modelling/data model
+   ```
+
+1. Build and run the container once from within
+   `dart-pipeline-model-container`:  `bash ./_container-build-run.sh`. This
+   will set up the Docker image so that dart-runner can start the docker image.
+1. Change to the `dart-runner` repo (this one) and run
+
+   ```shell
+   uv run main.py --date=DATE --model=actual-1 --cache=all
+   ```
+
+1. Once the pipeline finishes, `dart-runner` notifies `docker-dart-vis-app`
+   running from Step 1 using the presence of a file (the reload flag), the vis
+   app should now reload and show the latest forecast.
+
 ## Development
 
 Install [pre-commit](https://pre-commit.com) and setup pre-commit hooks
