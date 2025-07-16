@@ -16,3 +16,8 @@ dependencies = [
 [tool.uv.sources]
 dart-pipeline = { git = "https://github.com/kraemer-lab/DART-Pipeline" }
 dart-bias-correct = { git = "https://github.com/kraemer-lab/dart-bias-correct" }
+
+[dependency-groups]
+dev = [
+    "ipykernel>=6.29.5",
+]
