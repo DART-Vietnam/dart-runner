@@ -580,7 +580,7 @@ wheels = [
 [[package]]
 name = "dart-bias-correct"
 version = "0.1.0"
-source = { git = "https://github.com/kraemer-lab/dart-bias-correct#82ce077a4bfb5c9e025d7b253032be8ab3a8502b" }
+source = { git = "https://github.com/kraemer-lab/dart-bias-correct#bbd7f850196a0f036738f338273c436bb58b6841" }
 dependencies = [
     { name = "geoglue" },
     { name = "metpy" },
