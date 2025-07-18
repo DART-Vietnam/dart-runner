@@ -18,15 +18,23 @@ def is_inf(x) -> bool:
 
 
 @mock.patch.dict(os.environ, {"DART_PIPELINE_DATA_HOME": "data"})
-def test_spei():
+def test_spi_spei():
     ds = xr.open_dataset(
         "data/sources/VNM/ecmwf/VNM-2025-06-24-ecmwf.forecast.corrected.nc",
         decode_timedelta=True,
     )
     sds = add_spi_spei_bc(ds)
-    npt.assert_approx_equal(finite_max(sds.spei_bc), 8.2095365524292)
 
-    # Max SPEI is infinity for points that fall outside the reference REMOCLIC
+    # check maximums
+    npt.assert_approx_equal(finite_max(sds.spei_bc), 8.2095365524292)
+    npt.assert_approx_equal(finite_max(sds.spi_bc), 8.014016151428223)
+
+    # check minimums
+    npt.assert_almost_equal(float(sds.spei_bc.min().values), -0.6938957)
+    npt.assert_almost_equal(float(sds.spi_bc.min().values), -0.6930721402168274)
+
+    # Max SPEI/SPI is infinity for points that fall outside the reference REMOCLIC
     # dataset which covers only Vietnam. This includes points in neighbouring
     # countries and points in the ocean
     assert is_inf(sds.spei_bc.max())
+    assert is_inf(sds.spi_bc.max())
