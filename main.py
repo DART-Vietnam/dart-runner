@@ -415,9 +415,7 @@ def add_spi_spei_bc(cf: xr.Dataset) -> xr.Dataset:
     ds = ds.drop_vars("pevt")
 
     # perform weekly rolling mean with center=False and window=window --> wb_bc
-    ds_ma = (
-        ds.rolling(time=window_weeks, center=False).mean(dim="time").dropna(dim="time")
-    )
+    ds_ma = ds.rolling(time=window_weeks, center=False).mean().dropna(dim="time")
     # rename lat/lon to latitude, longitude
     # gamma parameters are estimated using ERA5 data that uses latitude, longitude names
     ds_ma = ds_ma.rename({"lat": "latitude", "lon": "longitude"})
