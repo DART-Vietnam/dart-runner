@@ -5,6 +5,7 @@
 import os
 import re
 import sys
+import tempfile
 import types
 import shutil
 import docker
@@ -40,7 +41,6 @@ MIN_DISK_SPACE_GB = 40
 STEPS = {
     "dl": "Fetching forecast",
     "bc": "Performing forecast bias correction",
-    "spei": "Computing SPI and SPEI",
     "zs": "Processing forecast",
     "m": "Running model",
 }
@@ -231,7 +231,6 @@ def parse_args():
         epilog="""Cache steps (default=dl)
   * dl: Forecast downloaded files, e.g. VNM-2025-05-28-ecmwf.forecast.nc
   * bc: Bias corrected files, e.g. VNM-2025-05-28-ecmwf.forecast.corrected.nc
-  * spei: Corrected files with SPI and SPEI added, e.g. VNM-2025-05-28-ecmwf.forecast.corrected_spei.nc
   * zs: Zonal statistics files, e.g. VNM-2-2025-05-28-ecmwf.forecast.nc
 
    Use --cache=s1,s2 to use cached files in s1 and s2, for example, set--cache=dl,bc
@@ -473,9 +472,6 @@ def main():
     forecast_instant = sources / f"{ISO3}-{date}-ecmwf.forecast.instant.nc"
     forecast_accum = sources / f"{ISO3}-{date}-ecmwf.forecast.accum.nc"
     forecast_corrected = sources / f"{ISO3}-{date}-ecmwf.forecast.corrected.nc"
-    forecast_corrected_indices = (  # noqa: F841
-        sources / f"{ISO3}-{date}-ecmwf.forecast.corrected_spei.nc"
-    )
     forecast_zonal_stats = output_root / f"{ISO3}-{ADMIN}-{date}-ecmwf.forecast.nc"
 
     run(
@@ -496,6 +492,22 @@ def main():
         f"{ISO3}-{date}",
         REGION.bbox.int(),
     )
+    try:
+        msg(
+            "==> Attempting to add SPI and SPEI using previous forecast and 4-week ERA5 window"
+        )
+        forecast_corrected_arr = xr.open_dataset(
+            forecast_corrected, decode_timedelta=True
+        )
+        sds = add_spi_spei_bc(forecast_corrected_arr)
+        set_lonlat_attrs(sds)
+        with tempfile.NamedTemporaryFile(prefix="dart-runner-", suffix=".nc") as fp:
+            sds.to_netcdf(fp.name)
+            forecast_corrected_arr.close()
+            shutil.copy(fp.name, forecast_corrected)
+        msg("==> Patched forecast corrected file with SPI and SPEI")
+    except FileNotFoundError:
+        fail("==> Failed to patch forecast corrected file with SPI and SPEI")
     output = run(
         cache, "zs", [forecast_zonal_stats], process_forecast, f"{ISO3}-{ADMIN}", date
     )
