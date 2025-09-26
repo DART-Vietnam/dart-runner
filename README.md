@@ -97,8 +97,7 @@ Some of the key options are:
 
 For the demo, all components need to be setup and in-place.
 
-1. First, clone the `docker-dart-vis-app` repo and run `./build.sh` and
-   `./run.sh` to run the container. The frontend will be visible at
+1. First, clone the `docker-dart-vis-app` repo, run `docker compose pull` to pull the latest container image from GHCR, and `docker compose up -d` to run the container. The frontend will be visible at
    http://localhost:5001
 1. Then clone the `dart-pipeline-model-container` repo and link the
    `modelling/data` folder into the expected source folder:
