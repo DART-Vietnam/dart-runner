@@ -78,7 +78,7 @@ fd40c75c3dcf8bb25e0c32e5689cef941927964a132feab3686ae0d0d9454a7a  eefh_testv2_te
 c1ec01cee2efda44772b14c0e3b6f455de883601d0c4481257e7654cbaf7ef96  vngp_regrid_era_full.nc
 """)
 
-MODEL_IMAGE = "dart-model-container:0.4.0"
+MODEL_IMAGE = "ghcr.io/dart-vietnam/dart-pipeline-model-container:0.4.0"
 ALIASES = {
     "observation": "T2m_r_tp_Vietnam_ERA5.nc",
     "historical-forecast": "eefh_testv2_test_githubv1_3.nc",
