@@ -88,7 +88,7 @@ ALIASES = {
     "reference-precipitation": "vngp_regrid_era_full.nc",
 }
 MODEL_DATA_HOME = Path.home() / ".local/share/dart-pipeline/sources/VNM/model"
-MODEL_EXPECTED_OUTPUT = MODEL_DATA_HOME / "forecast_snapshot_ref.csv"
+MODEL_EXPECTED_OUTPUT = MODEL_DATA_HOME / "forecast_snapshot_ref.parquet"
 
 if not MODEL_DATA_HOME.exists():
     warnings.warn("Model data home does not exist, cannot run actual model")
