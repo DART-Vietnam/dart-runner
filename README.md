@@ -112,7 +112,7 @@ For the demo, all components need to be setup and in-place.
    ```
 
 1. Build and run the container once from within
-   `dart-pipeline-model-container`:  `bash ./_container-build-run.sh`. This
+   `dart-pipeline-model-container`:  `docker compose up && docker compose run`. This
    will set up the Docker image so that dart-runner can start the docker image.
 1. Change to the `dart-runner` repo (this one) and run
 
